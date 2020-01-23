@@ -1,0 +1,259 @@
+
+Candidate: Natalia R. Maciel Block
+
+
+## Question 1: 
+
+#The first step is to create the new table, that I will call “heading_degrees”, from the public.ride_pickups one. 
+I am assuming these tables are part of an hyphotetical database called “company”. Both tables are presented in the
+assignment with the schema (public). Since only these two tables are presented I am considering that 
+“public” is the only schema in this database or, if there are others, this must be the default one. 
+In order to avoid errors or warnings in my coding I am referring to the tables only by their names (without the “public.”), 
+since both are part of the same schema.
+
+(SQL script)
+USE company;
+
+CREATE TABLE heading_degrees SELECT trip_id, picked_up_at, pickup_lat, pickup_lng FROM ride_pickups;
+
+
+#Second: I’ll add a column with data type float called pickup_heading 
+
+(SQL script)
+ALTER TABLE heading_degress ADD pickup_heading FLOAT(3, 2);
+
+COMMIT;
+
+
+#Third: I will update this column with the approximate degrees to true north the vehicle is facing. 
+I am assuming the earth as a trigonometric circle in which the true north is zero degree, east is 90, 
+south is 180 and west 270. For the other locations I will use latitude and longitude as sides of a right triangle 
+to calculate the degrees relative to north. 
+Latitude varies from zero (Equator line) to 90 towards north and zero to -90 towards south. 
+Longitude varies from zero (Greenwich meridian) to 180 towards east and 0 to -180 towards west.
+
+#Setting degrees for true north:
+
+(SQL script)
+UPDATE heading_degrees
+SET pickup_heading = 0
+WHERE pickup_lng = 0 
+AND pickup_lat= 90 ;
+
+#East, which is 90 degrees, is in longitude=180 and latitude = 0
+
+(SQL script)
+UPDATE heading_degrees
+SET pickup_heading= 90
+WHERE pickup_lng = 180 
+AND pickup_lat= 0 ;
+
+
+#South, which is 180 degrees, is in longitude= 0 and latitude= -90
+
+(SQL script)
+UPDATE heading_degrees
+SET pickup_heading= 180
+WHERE pickup_lng = 0
+AND pickup_lat= -90 ;
+
+
+#West, 270 degrees, is in longitude= -180 and latitude = 0
+
+(SQL script)
+UPDATE heading_degrees
+SET pickup_heading= 270
+WHERE pickup_lng = -180
+AND pickup_lat= 0 ;
+
+
+#To update the rest of pickup_heading I am assuming that each circle quadrant are the 
+remaining geographical coordinates. From north moving clockwise the first quadrant is NE, 
+the second SE, the third SW and the fourth NW. 
+In this sense, given the latitude and longitude as the lengths of the sides of a right triangle 
+I will find the angles by calculating their inverse tangent. The inverse tangent is given in radian units,
+so I will have to convert them to degrees. 
+
+#For the triangle sides in the first quadrant (NE) longitude points must be between 0 and 180, 
+and latitude points between 0 and 90. The angle that give us the degrees relative to north in this case
+is the interior one. I will calculate the tangent of angle (let’s call it “a”) latitude/longitude with SQL function
+“TAN”. The inverse of the tangent is calculated with “ATAN” function. Radians are converted to degrees with
+the “DEGREES” function.
+
+
+(SQL script)
+UPDATE heading_degress
+SET pickup_heading= DEGREES(ATAN(TAN(pickup_lat/pickup_lng)))
+WHERE pickup_lng BETWEEN 0 AND 180
+AND pickup_lat BETWEEN 0 AND 90; 
+
+
+#For the second quadrant (SE) the best way to find the degrees relative to north is calculating the exterior angle -
+which has the same degrees as the opposite angle to the longitude side in the triangle -  and sum the 90 degrees 
+of the first quadrant. In this case, the tangent of the angle (let’s call it “b”, since it is the exterior one) will
+be calculated as longitude/latitude. For the length of the triangle sides, longitude points must be between 0 and 180,
+and latitude points between 0 and - 90.
+
+
+(SQL script)
+UPDATE heading_degress
+SET pickup_heading= DEGREES(ATAN(TAN(pickup_long/pickup_lat))) + 90
+WHERE pickup_lng BETWEEN 0 AND 180
+AND pickup_lat BETWEEN 0 AND 90; 
+
+
+#For the third quadrant (SW) I will calculate the interior angle and add the 180 degrees of the previous two quadrants.
+Longitude points must be between 0 and -180, and latitude between 0 and - 90.
+
+
+(SQL script)
+UPDATE heading_degress
+SET pickup_heading= DEGREES(ATAN(TAN(pickup_lat/pickup_lng))) + 180
+WHERE pickup_lng BETWEEN 0 AND - 180
+AND pickup_lat BETWEEN 0 AND - 90; 
+
+
+#Finally, for the fourth quadrant (NW) I will calculate the interior angle and sum the 270 degrees of the previous quadrants.
+In this case the opposite side of the interior angle is the longitude so I have to calculate the tangent of angle “a” as
+longitude/latitude. Longitude points must be between 0 and -180, latitude must be between 0 and 90
+
+
+(SQL script)
+UPDATE heading_degress
+SET pickup_heading= DEGREES(ATAN(TAN(pickup_lng/pickup_lat))) + 270
+WHERE pickup_lng BETWEEN 0 AND -180
+AND pickup_lat BETWEEN 0 AND 90; 
+
+COMMIT; 
+
+## Question 2: 
+
+#First I’ll create a new table called driver_coordinates bringing from heading_degrees the trip_id and
+pickup_heading columns. Then I will add to this new table the column side_of_street and update it using
+the pickup_heading metrics. 
+
+(SQL script)
+CREATE TABLE driver_coordinates SELECT trip_id, pickup_headings FROM heading_degrees;
+
+ALTER TABLE driver_coordinates ADD side_of_street VARCHAR(2);
+
+UPDATE driver_coordinates 
+SET side_of_street = CASE
+                WHEN pickup_headings= 0 THEN ’N’
+           			WHEN pickup_headings BETWEEN 0 AND 90 THEN ‘NE’
+           			WHEN pickup_headings= 90 THEN ‘E’
+           			WHEN pickup_headings BETWEEN 90 AND 180 THEN ‘SE’ 
+           			WHEN pickup_headings= 180 THEN ’S’
+          			WHEN pickup_headings BETWEEN 180 AND 270 THEN ‘SW’
+          			WHEN pickup_headings = 270 THEN ‘W’
+           			ELSE ‘NW’ 
+           		END
+
+
+COMMIT; 
+
+
+## Question 3 - a##
+
+#The National Association of City Transportation Officials states that lane widths of 10 feet are appropriate in urban 
+areas (Information available at https://nacto.org/publication/urban-street-design-guide/street-design-elements/lane-width/)
+In this sense, I understand that the passenger would have crossed a two-way street if she had to walk more than 20 feet
+(that is around 6.1 meters). I assume that the passenger is waiting the ride in the 
+location she requested it and just starts walking when the driver arrives in the pickup location. 
+To find the distance the passenger walked I will calculate the difference between the request and pickup latitudes and longitudes, 
+that will be the lengths of a right triangle sides in which the hypotenuse size is the distance the passenger walked. 
+Before calculating the hypotenuse I have to convert the 
+length of the sides to meters by dividing these numbers by 60 and multiplying the result of this division by 1.852, that is
+the value of the magnetic north that should be taken into account. So, I will first create a SQL function that does these
+calculations and then use these function in a query containing a field that returns a boolean that describes
+whether the passenger crossed the street. In other words the query will return return TRUE if crossed_street is equal or 
+greater than 6.1 meters (20 feet).
+
+#Creating the SQL function:
+
+(SQL script)
+
+CREATE FUNCTION distance(@lat1 float, @long1 float, @lat2 float, @long2 float)
+RETURNS float
+
+AS
+
+BEGIN
+
+    DECLARE @DLA as float;
+    DECLARE @DLO as float;
+    DECLARE @DLAM as float;
+    DECLARE @DLOM as float;
+
+    SET @DLA = @lat1 - @lat2;
+    SET @DLO = @long1 - @long2;
+    SET @DLAM = @DLA/60 * 1.852;
+    SET  DLOM= @DLO/60*1.852;
+
+RETURN 
+    SQRT(DLAM + DLOM)
+
+END
+
+
+#Using the function to run the query:
+
+(SQL script)
+
+BEGIN
+    DECLARE @crossed_street float;
+
+    SELECT @crossed_street= distance(request_lat, request_long, pickup_lat, pickup_long)
+    FROM rider_pickups;
+
+    SELECT @crossed_street;
+
+    IF @crossed_street >= 6.1
+    BEGIN
+        PRINT ‘TRUE’;
+    END
+    ELSE
+    BEGIN
+        PRINT ‘FALSE’;
+    END
+
+END
+
+## Question 3 - b##
+
+The edge cases would be those which the passenger walked directly North, South, East or West to find the
+pickup spot. This may indicate that the passenger had to walk forward, backward or side to side to take the ride.
+Another possibility is that the passenger could be inside of a building when she requested the ride and had to 
+walk out once the car arrived. In these cases, to know whether she crossed the street we would need to know if she 
+was inside of a building or, if she was in the street, whether the street runs North-South, East-West as well as the other
+streets around the pickup location.
+
+## Question 4 ##
+
+The first thing to consider is the traffic in the request location. In big cities and in business neighborhoods traffic 
+is busier and streets/avenues are larger so the rider may have to walk more and will take longer to arrive at the pickup spot,
+which may negatively affect her experience. Bad weather conditions may affect this experience even more.
+The company could do a really quick survey in its app at the end of the trip asking the rider if, in her point of view, 
+she needed to walk too long to take the ride, whether she had to cross the street and how she evaluates the experience. 
+This survey should not last for too long (maybe for about a week) or it could start bothering the users, creating another 
+experience issue. The survey would provide a sample of users that actually had to cross the street and how they evaluated the 
+experience. Using data as date, time, latitude and longitude of the request and pickup locations it is possible to merge 
+other external data like meteorological conditions, the size of the street and the size of the city, 
+maybe using population numbers as proxy. 
+
+The first step would be to run a model to asses the most important features influencing the users’ evaluation.
+If the independent/target variable had more than one category (if the experience was excellent, very good, good, ok,
+bad, really bad) I would run a multinomial hierarchical model to evaluate the probability of each type of experience. 
+In the first level of the model I would include the individual data collected in the survey and in the 
+second (and probably third, if necessary) I would include the data about the location conditions. This model would
+give me the first overview of the most important variables to be taken into account to improve the company's services concerning
+the pickup locations.
+
+As a second step, some features could be added to the app to gather more data about users. 
+In the settings section, and when a new user create an account, date of birth could be requested. I imagine that elderly 
+users will have their experience more impacted than younger users if they have to cross the street. Another
+feature that could be included is an option in which the user can set if she has a disability or is 
+an expecting mother, conditions that can considerably affect users’ mobility. After these changes a second round of 
+surveys could be applied to verify if there was any improvements on users’ evaluation.
+
+
